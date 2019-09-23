@@ -245,7 +245,7 @@ func (p *Pusher) handleReceiptMsg(msg []byte) error {
 		return err
 	}
 	log.Debug("Handler", "receipt", label(receipt.Addr), "self", label(p.ps.BaseAddr()))
-	p.PushReceipt(receipt.Addr, receipt.Origin)
+	go p.PushReceipt(receipt.Addr, receipt.Origin)
 	return nil
 }
 

@@ -867,10 +867,11 @@ func (p *Pss) addFwdCache(msg *PssMsg) error {
 	var entry cacheEntry
 	var ok bool
 
+	digest := p.msgDigest(msg)
+
 	p.fwdCacheMu.Lock()
 	defer p.fwdCacheMu.Unlock()
 
-	digest := p.msgDigest(msg)
 	if entry, ok = p.fwdCache[digest]; !ok {
 		entry = cacheEntry{}
 	}
@@ -881,10 +882,11 @@ func (p *Pss) addFwdCache(msg *PssMsg) error {
 
 // check if message is in the cache
 func (p *Pss) checkFwdCache(msg *PssMsg) bool {
+	digest := p.msgDigest(msg)
+
 	p.fwdCacheMu.Lock()
 	defer p.fwdCacheMu.Unlock()
 
-	digest := p.msgDigest(msg)
 	entry, ok := p.fwdCache[digest]
 	if ok {
 		if entry.expiresAt.After(time.Now()) {
