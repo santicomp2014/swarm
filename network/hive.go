@@ -17,6 +17,7 @@
 package network
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethersphere/swarm/log"
 	"github.com/ethersphere/swarm/network/capability"
+	"github.com/ethersphere/swarm/pot"
 	"github.com/ethersphere/swarm/state"
 )
 
@@ -131,6 +133,115 @@ func (h *Hive) Stop() error {
 	return nil
 }
 
+// HandleMsg is the message handler that delegates incoming messages
+func (h *Hive) handleMsg(p *Peer) func(context.Context, interface{}) error {
+	return func(ctx context.Context, msg interface{}) error {
+		switch msg := msg.(type) {
+		case *peersMsg:
+			return h.handlePeersMsg(ctx, p, msg)
+		case *subPeersMsg:
+			return h.handleSubPeersMsg(ctx, p, msg)
+		}
+		return nil
+	}
+}
+
+// String pretty prints a peersMsg
+func (msg peersMsg) String() string {
+	return fmt.Sprintf("%T: %v", msg, msg.Peers)
+}
+
+// handlePeersMsg called by the protocol when receiving peerset (for target address)
+// list of nodes ([]PeerAddr in peersMsg) is added to the overlay db using the
+// Register interface method
+func (h *Hive) handlePeersMsg(_ context.Context, p *Peer, msg *peersMsg) error {
+	// register all addresses
+	if len(msg.Peers) == 0 {
+		return nil
+	}
+	for _, a := range msg.Peers {
+		p.seen(a)
+		h.BroadcastPeer(a)
+	}
+	return h.Kademlia.Register(msg.Peers...)
+}
+
+// subPeers msg is communicating the depth of the overlay table of a peer
+type subPeersMsg struct {
+	Depth uint8
+}
+
+// String returns the pretty printer
+func (msg subPeersMsg) String() string {
+	return fmt.Sprintf("%T: request peers > PO%02d. ", msg, msg.Depth)
+}
+
+// handleSubPeersMsg handles incoming subPeersMsg
+// this message represents the saturation depth of the remote peer
+// saturation depth is the radius within which the peer subscribes to peers
+// the first time this is received we send peer info on all
+// our connected peers that fall within peers saturation depth
+// otherwise this depth is just recorded on the peer, so that
+// subsequent new connections are sent iff they fall within the radius
+func (h *Hive) handleSubPeersMsg(ctx context.Context, p *Peer, msg *subPeersMsg) error {
+	p.setDepth(msg.Depth)
+	// only send peers after the initial subPeersMsg
+	if !p.sentPeers {
+		var peers []*BzzAddr
+		// iterate connection in ascending order of disctance from the remote address
+		h.EachConn(p.Over(), 255, func(kp *Peer, po int) bool {
+			// terminate if we are beyond the radius
+			if uint8(po) < msg.Depth {
+				return false
+			}
+			if !p.seen(kp.BzzAddr) { // here just records the peer sent
+				peers = append(peers, kp.BzzAddr)
+			}
+			return true
+		})
+		// if useful  peers are found, send them over
+		if len(peers) > 0 {
+			go p.Send(ctx, &peersMsg{Peers: sortPeers(peers)})
+		}
+	}
+	p.sentPeers = true
+	return nil
+}
+
+// BroadcastPeer informs all peers about a newly added node
+func (h *Hive) BroadcastPeer(p *BzzAddr) {
+	f := func(val *Peer, po int) bool {
+		h.AdvertisePeer(val, p, uint8(po))
+		return true
+	}
+	h.Kademlia.EachConn(p.Address(), 255, f)
+}
+
+// AdvertisePeer notifies the remote node (recipient) about a peer if
+// the peer's PO is within the recipients advertised depth
+// OR the peer is closer to the recipient than self
+// unless already notified during the connection session
+func (h *Hive) AdvertisePeer(p *Peer, a *BzzAddr, po uint8) {
+	// immediately return
+	if (po < p.getDepth() && pot.ProxCmp(h.Kademlia.BaseAddr(), p.Address(), a.Address()) != 1) || p.seen(a) {
+		return
+	}
+	resp := &peersMsg{
+		Peers: []*BzzAddr{a},
+	}
+	log.Warn("notifypeer", "notify", resp)
+	go p.Send(context.Background(), resp)
+}
+
+// NotifyDepth sends a message to all connections if depth of saturation is changed
+func (h *Hive) BroadcastDepth(depth uint8) {
+	f := func(val *Peer, po int) bool {
+		go val.Send(context.Background(), &subPeersMsg{Depth: uint8(po)})
+		return true
+	}
+	h.Kademlia.EachConn(nil, 255, f)
+}
+
 // connect is a forever loop
 // at each iteration, ask the overlay driver to suggest the most preferred peer to connect to
 // as well as advertises saturation depth if needed
@@ -141,7 +252,7 @@ loop:
 		case <-h.ticker.C:
 			addr, depth, changed := h.SuggestPeer()
 			if h.Discovery && changed {
-				NotifyDepth(uint8(depth), h.Kademlia)
+				h.BroadcastDepth(uint8(depth))
 			}
 			if addr == nil {
 				continue loop
@@ -166,21 +277,21 @@ func (h *Hive) Run(p *BzzPeer) error {
 	h.trackPeer(p)
 	defer h.untrackPeer(p)
 
-	dp := NewPeer(p, h.Kademlia)
+	dp := NewPeer(p)
 	depth, changed := h.On(dp)
 	// if we want discovery, advertise change of depth
 	if h.Discovery {
 		if changed {
 			// if depth changed, send to all peers
-			NotifyDepth(depth, h.Kademlia)
+			h.BroadcastDepth(depth)
 		} else {
 			// otherwise just send depth to new peer
-			dp.NotifyDepth(depth)
+			dp.Send(context.Background(), &subPeersMsg{Depth: uint8(depth)})
 		}
-		NotifyPeer(p.BzzAddr, h.Kademlia)
+		h.BroadcastPeer(p.BzzAddr)
 	}
 	defer h.Off(dp)
-	return dp.Run(dp.HandleMsg)
+	return dp.Run(h.handleMsg(dp))
 }
 
 func (h *Hive) trackPeer(p *BzzPeer) {
