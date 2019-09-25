@@ -135,6 +135,7 @@ func NewSwarm(config *api.Config, mockStore *mock.NodeStore) (self *Swarm, err e
 			swapParams,
 			self.config.Contract,
 			self.config.SwapInitialDeposit,
+			self.config.ChequebookFactoryContract,
 		)
 		if err != nil {
 			return nil, err
