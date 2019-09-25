@@ -221,10 +221,8 @@ func NewSwarm(config *api.Config, mockStore *mock.NodeStore) (self *Swarm, err e
 	self.fileStore = storage.NewFileStore(lnetStore, localStore, self.config.FileStoreParams, self.tags)
 
 	log.Debug("Setup local storage")
-
 	self.bzz = network.NewBzz(bzzconfig, to, self.stateStore, stream.Spec, self.retrieval.Spec(), self.streamer.Run, self.retrieval.Run)
-
-	self.bzzEth = bzzeth.New()
+	self.bzzEth = bzzeth.New(self.netStore, to)
 
 	// Pss = postal service over swarm (devp2p over bzz)
 	self.ps, err = pss.New(to, config.Pss)
@@ -237,9 +235,10 @@ func NewSwarm(config *api.Config, mockStore *mock.NodeStore) (self *Swarm, err e
 
 	self.api = api.NewAPI(self.fileStore, self.dns, feedsHandler, self.privateKey, self.tags)
 
-	// Instantiate the pinAPI object with the already opened localstore
-	self.pinAPI = pin.NewAPI(localStore, self.stateStore, self.config.FileStoreParams, self.tags, self.api)
-
+	if config.EnablePinning {
+		// Instantiate the pinAPI object with the already opened localstore
+		self.pinAPI = pin.NewAPI(localStore, self.stateStore, self.config.FileStoreParams, self.tags, self.api)
+	}
 	self.sfs = fuse.NewSwarmFS(self.api)
 	log.Debug("Initialized FUSE filesystem")
 
