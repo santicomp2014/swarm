@@ -702,7 +702,7 @@ func TestStarNetworkSyncWithBogusNodes(t *testing.T) {
 			Peer:    protoPeer,
 			BzzAddr: network.NewBzzAddr(peerAddr.Bytes(), []byte(fmt.Sprintf("%x", peerAddr[:]))),
 		}
-		peer := network.NewPeer(bzzPeer, pivotKad)
+		peer := network.NewPeer(bzzPeer)
 		pivotKad.On(peer)
 	}
 	time.Sleep(50 * time.Millisecond)

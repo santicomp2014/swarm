@@ -193,7 +193,7 @@ func TestAddressMatchProx(t *testing.T) {
 			Peer:    protoPeer,
 			BzzAddr: network.NewBzzAddr(peerAddr.Bytes(), []byte(fmt.Sprintf("%x", peerAddr[:]))),
 		}
-		peer := network.NewPeer(bzzPeer, kad)
+		peer := network.NewPeer(bzzPeer)
 		kad.On(peer)
 		peers = append(peers, peer)
 	}
@@ -614,7 +614,7 @@ func TestPeerCapabilityMismatch(t *testing.T) {
 	wrongpsspeer := network.NewPeer(&network.BzzPeer{
 		Peer:    protocols.NewPeer(p2p.NewPeer(nid, common.ToHex(wrongpssaddr.Over()), []p2p.Cap{wrongpsscap}), rw, nil),
 		BzzAddr: network.NewBzzAddr(wrongpssaddr.Over(), nil),
-	}, kad)
+	})
 
 	// one peer doesn't even have pss (boo!)
 	nopssaddr := network.RandomBzzAddr()
@@ -626,7 +626,7 @@ func TestPeerCapabilityMismatch(t *testing.T) {
 	nopsspeer := network.NewPeer(&network.BzzPeer{
 		Peer:    protocols.NewPeer(p2p.NewPeer(nid, common.ToHex(nopssaddr.Over()), []p2p.Cap{nopsscap}), rw, nil),
 		BzzAddr: network.NewBzzAddr(nopssaddr.Over(), nil),
-	}, kad)
+	})
 
 	// add peers to kademlia and activate them
 	// it's safe so don't check errors
