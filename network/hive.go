@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethersphere/swarm/log"
 	"github.com/ethersphere/swarm/network/capability"
 	"github.com/ethersphere/swarm/pot"
@@ -38,6 +39,7 @@ When the hive is started, a forever loop is launched that
 asks the  kademlia nodetable
 to suggest peers to bootstrap connectivity
 */
+var sortPeers = noSortPeers
 
 // HiveParams holds the config options to hive
 type HiveParams struct {
@@ -380,4 +382,52 @@ func (h *Hive) savePeers() error {
 		return fmt.Errorf("could not save peers: %v", err)
 	}
 	return nil
+}
+
+/*
+peersMsg is the message to pass peer information
+It is always a response to a peersRequestMsg
+
+The encoding of a peer address is identical the devp2p base protocol peers
+messages: [IP, Port, NodeID],
+Note that a node's FileStore address is not the NodeID but the hash of the NodeID.
+
+TODO:
+To mitigate against spurious peers messages, requests should be remembered
+and correctness of responses should be checked
+
+If the proxBin of peers in the response is incorrect the sender should be
+disconnected
+*/
+
+// peersMsg encapsulates an array of peer addresses
+// used for communicating about known peers
+// relevant for bootstrapping connectivity and updating peersets
+type peersMsg struct {
+	Peers []*BzzAddr
+}
+
+// DecodeRLP implements rlp.Decoder interface
+func (p *peersMsg) DecodeRLP(s *rlp.Stream) error {
+	_, err := s.List()
+	if err != nil {
+		return err
+	}
+	_, err = s.List()
+	if err != nil {
+		return err
+	}
+	for {
+		var addr BzzAddr
+		err = s.Decode(&addr)
+		if err != nil {
+			break
+		}
+		p.Peers = append(p.Peers, &addr)
+	}
+	return nil
+}
+
+func noSortPeers(peers []*BzzAddr) []*BzzAddr {
+	return peers
 }

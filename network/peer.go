@@ -18,13 +18,7 @@ package network
 
 import (
 	"sync"
-
-	"github.com/ethereum/go-ethereum/rlp"
 )
-
-// discovery bzz extension for requesting and relaying node address records
-
-var sortPeers = noSortPeers
 
 // Peer wraps BzzPeer and embeds Kademlia overlay connectivity driver
 type Peer struct {
@@ -44,50 +38,6 @@ func NewPeer(p *BzzPeer) *Peer {
 	// record remote as seen so we never send a peer its own record
 	d.seen(p.BzzAddr)
 	return d
-}
-
-/*
-peersMsg is the message to pass peer information
-It is always a response to a peersRequestMsg
-
-The encoding of a peer address is identical the devp2p base protocol peers
-messages: [IP, Port, NodeID],
-Note that a node's FileStore address is not the NodeID but the hash of the NodeID.
-
-TODO:
-To mitigate against spurious peers messages, requests should be remembered
-and correctness of responses should be checked
-
-If the proxBin of peers in the response is incorrect the sender should be
-disconnected
-*/
-
-// peersMsg encapsulates an array of peer addresses
-// used for communicating about known peers
-// relevant for bootstrapping connectivity and updating peersets
-type peersMsg struct {
-	Peers []*BzzAddr
-}
-
-// DecodeRLP implements rlp.Decoder interface
-func (p *peersMsg) DecodeRLP(s *rlp.Stream) error {
-	_, err := s.List()
-	if err != nil {
-		return err
-	}
-	_, err = s.List()
-	if err != nil {
-		return err
-	}
-	for {
-		var addr BzzAddr
-		err = s.Decode(&addr)
-		if err != nil {
-			break
-		}
-		p.Peers = append(p.Peers, &addr)
-	}
-	return nil
 }
 
 // seen takes a peer address and checks if it was sent to a peer already
@@ -113,8 +63,4 @@ func (d *Peer) setDepth(depth uint8) {
 	d.mtx.Lock()
 	defer d.mtx.Unlock()
 	d.depth = depth
-}
-
-func noSortPeers(peers []*BzzAddr) []*BzzAddr {
-	return peers
 }
