@@ -214,6 +214,7 @@ type Pss struct {
 	*KeyStore
 	forwardCache *ttlset.TTLSet
 	gcTicker     *ticker.Ticker
+	sem          chan struct{}
 
 	privateKey *ecdsa.PrivateKey // pss can have it's own independent key
 	auxAPIs    []rpc.API         // builtins (handshake, test) can add APIs
@@ -263,6 +264,7 @@ func New(k *network.Kademlia, params *Params) (*Pss, error) {
 		quitC:      make(chan struct{}),
 
 		peers:     make(map[string]*protocols.Peer),
+		sem:       make(chan struct{}, 500),
 		msgTTL:    params.MsgTTL,
 		capstring: c.String(),
 
@@ -481,7 +483,9 @@ func (p *Pss) deregister(topic *message.Topic, hndlr *handler) {
 // generic peer-specific handler for incoming messages
 // calls pss msg handler asyncronously
 func (p *Pss) handle(ctx context.Context, peer *protocols.Peer, msg interface{}) error {
+	p.sem <- struct{}{}
 	go func() {
+		defer func() { <-p.sem }()
 		pssmsg, ok := msg.(*message.Message)
 		if !ok {
 			log.Error("invalid message type", "msg", msg)
