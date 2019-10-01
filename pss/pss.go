@@ -161,10 +161,13 @@ func (o *outbox) enqueue(outboxmsg *outboxMsg) error {
 }
 
 func (o *outbox) processOutbox() {
+	sem := make(chan struct{}, 500) // limit the number of concurrent process outbox goroutines
 	for {
 		select {
 		case slot := <-o.process:
+			sem <- struct{}{}
 			go func(slot int) {
+				defer func() { <-sem }()
 				msg := o.msg(slot)
 				metrics.GetOrRegisterResettingTimer("pss.handle.outbox", nil).UpdateSince(msg.startedAt)
 				if err := o.forward(msg.msg); err != nil {

@@ -122,6 +122,8 @@ func (p *Pusher) sync() {
 	var batchStartTime time.Time
 	ctx := context.Background()
 
+	sem := make(chan struct{}, 500) // limit the number of concurrent send chunks
+
 	for {
 		select {
 		// handle incoming chunks
@@ -145,8 +147,11 @@ func (p *Pusher) sync() {
 			}
 
 			metrics.GetOrRegisterCounter("pusher.send-chunk.send-to-sync", nil).Inc(1)
+
+			sem <- struct{}{}
 			// send the chunk and ignore the error
 			go func(ch chunk.Chunk) {
+				defer func() { <-sem }()
 				if err := p.sendChunkMsg(ch); err != nil {
 					p.logger.Error("error sending chunk", "addr", ch.Address().Hex(), "err", err)
 				}
