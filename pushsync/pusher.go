@@ -123,78 +123,96 @@ func (p *Pusher) sync() {
 	ctx := context.Background()
 	sem := make(chan struct{}, 500)
 
+	// actor handling incoming chunks
+	go func() {
+		time.Sleep(5 * time.Second)
+
+		for {
+			select {
+			// handle incoming chunks
+			case ch, more := <-chunks:
+				// if no more, set to nil, reset timer to 0 to finalise batch immediately
+				if !more {
+					chunks = nil
+					var dur time.Duration
+					if chunksInBatch == 0 {
+						dur = 500 * time.Millisecond
+					}
+					timer.Reset(dur)
+					break
+				}
+
+				chunksInBatch++
+				metrics.GetOrRegisterCounter("pusher.send-chunk", nil).Inc(1)
+				// if no need to sync this chunk then continue
+				if !p.needToSync(ch) {
+					break
+				}
+
+				metrics.GetOrRegisterCounter("pusher.send-chunk.send-to-sync", nil).Inc(1)
+
+				sem <- struct{}{}
+				// send the chunk and ignore the error
+				go func(ch chunk.Chunk) {
+					if err := p.sendChunkMsg(ch); err != nil {
+						p.logger.Error("error sending chunk", "addr", ch.Address().Hex(), "err", err)
+					}
+				}(ch)
+			}
+		}
+	}()
+
+	// actor handling receipts
+	go func() {
+		time.Sleep(5 * time.Second)
+
+		for {
+			select {
+			// handle incoming receipts
+			case addr := <-p.receipts:
+				hexaddr := hex.EncodeToString(addr)
+				p.logger.Trace("got receipt", "addr", hexaddr)
+				metrics.GetOrRegisterCounter("pusher.receipts.all", nil).Inc(1)
+				// ignore if already received receipt
+				item, found := p.pushed[hexaddr]
+
+				<-sem
+				if !found {
+					metrics.GetOrRegisterCounter("pusher.receipts.not-found", nil).Inc(1)
+					p.logger.Trace("not wanted or already got... ignore", "addr", hexaddr)
+					break
+				}
+				if item.synced { // already got receipt in this same batch
+					metrics.GetOrRegisterCounter("pusher.receipts.already-synced", nil).Inc(1)
+					p.logger.Trace("just synced... ignore", "addr", hexaddr)
+					break
+				}
+				// increment synced count for the tag if exists
+				tag := item.tag
+				if tag != nil {
+					tag.Inc(chunk.StateSynced)
+					if tag.Done(chunk.StateSynced) {
+						p.logger.Debug("closing root span for tag", "taguid", tag.Uid, "tagname", tag.Name)
+						tag.FinishRootSpan()
+					}
+					// finish span for pushsync roundtrip, only have this span if we have a tag
+					item.span.Finish()
+				}
+
+				totalDuration := time.Since(item.sentAt)
+				metrics.GetOrRegisterResettingTimer("pusher.chunk.roundtrip", nil).Update(totalDuration)
+				metrics.GetOrRegisterCounter("pusher.receipts.synced", nil).Inc(1)
+
+				// collect synced addresses and corresponding items to do subsequent batch operations
+				syncedAddrs = append(syncedAddrs, addr)
+				item.synced = true
+			}
+		}
+	}()
+
 	for {
 		select {
-		// handle incoming chunks
-		case ch, more := <-chunks:
-			// if no more, set to nil, reset timer to 0 to finalise batch immediately
-			if !more {
-				chunks = nil
-				var dur time.Duration
-				if chunksInBatch == 0 {
-					dur = 500 * time.Millisecond
-				}
-				timer.Reset(dur)
-				break
-			}
-
-			chunksInBatch++
-			metrics.GetOrRegisterCounter("pusher.send-chunk", nil).Inc(1)
-			// if no need to sync this chunk then continue
-			if !p.needToSync(ch) {
-				break
-			}
-
-			metrics.GetOrRegisterCounter("pusher.send-chunk.send-to-sync", nil).Inc(1)
-
-			sem <- struct{}{}
-			// send the chunk and ignore the error
-			go func(ch chunk.Chunk) {
-				if err := p.sendChunkMsg(ch); err != nil {
-					p.logger.Error("error sending chunk", "addr", ch.Address().Hex(), "err", err)
-				}
-			}(ch)
-
-		// handle incoming receipts
-		case addr := <-p.receipts:
-			hexaddr := hex.EncodeToString(addr)
-			p.logger.Trace("got receipt", "addr", hexaddr)
-			metrics.GetOrRegisterCounter("pusher.receipts.all", nil).Inc(1)
-			// ignore if already received receipt
-			item, found := p.pushed[hexaddr]
-
-			<-sem
-			if !found {
-				metrics.GetOrRegisterCounter("pusher.receipts.not-found", nil).Inc(1)
-				p.logger.Trace("not wanted or already got... ignore", "addr", hexaddr)
-				break
-			}
-			if item.synced { // already got receipt in this same batch
-				metrics.GetOrRegisterCounter("pusher.receipts.already-synced", nil).Inc(1)
-				p.logger.Trace("just synced... ignore", "addr", hexaddr)
-				break
-			}
-			// increment synced count for the tag if exists
-			tag := item.tag
-			if tag != nil {
-				tag.Inc(chunk.StateSynced)
-				if tag.Done(chunk.StateSynced) {
-					p.logger.Debug("closing root span for tag", "taguid", tag.Uid, "tagname", tag.Name)
-					tag.FinishRootSpan()
-				}
-				// finish span for pushsync roundtrip, only have this span if we have a tag
-				item.span.Finish()
-			}
-
-			totalDuration := time.Since(item.sentAt)
-			metrics.GetOrRegisterResettingTimer("pusher.chunk.roundtrip", nil).Update(totalDuration)
-			metrics.GetOrRegisterCounter("pusher.receipts.synced", nil).Inc(1)
-
-			// collect synced addresses and corresponding items to do subsequent batch operations
-			syncedAddrs = append(syncedAddrs, addr)
-			item.synced = true
-
-			// retry interval timer triggers starting from new
+		// retry interval timer triggers starting from new
 		case <-timer.C:
 			// initially timer is set to go off as well as every time we hit the end of push index
 			// so no wait for retryInterval needed to set  items synced
