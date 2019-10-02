@@ -121,6 +121,7 @@ func (p *Pusher) sync() {
 	chunksInBatch := -1
 	var batchStartTime time.Time
 	ctx := context.Background()
+	sem := make(chan struct{}, 500)
 
 	for {
 		select {
@@ -145,6 +146,8 @@ func (p *Pusher) sync() {
 			}
 
 			metrics.GetOrRegisterCounter("pusher.send-chunk.send-to-sync", nil).Inc(1)
+
+			sem <- struct{}{}
 			// send the chunk and ignore the error
 			go func(ch chunk.Chunk) {
 				if err := p.sendChunkMsg(ch); err != nil {
@@ -159,6 +162,8 @@ func (p *Pusher) sync() {
 			metrics.GetOrRegisterCounter("pusher.receipts.all", nil).Inc(1)
 			// ignore if already received receipt
 			item, found := p.pushed[hexaddr]
+
+			<-sem
 			if !found {
 				metrics.GetOrRegisterCounter("pusher.receipts.not-found", nil).Inc(1)
 				p.logger.Trace("not wanted or already got... ignore", "addr", hexaddr)
