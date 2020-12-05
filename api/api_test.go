@@ -37,6 +37,7 @@ import (
 	"github.com/ethersphere/swarm/sctx"
 	"github.com/ethersphere/swarm/storage"
 	"github.com/ethersphere/swarm/testutil"
+	rns "github.com/rsksmart/rds-swarm/resolver"
 )
 
 func init() {
@@ -297,6 +298,57 @@ func TestAPIResolve(t *testing.T) {
 				}
 				if err.Error() != x.expectErr.Error() {
 					t.Fatalf("expected error %q, got %q", x.expectErr, err)
+				}
+			}
+		})
+	}
+}
+
+// TestRNSResolve tests resolving content from RNS addresses
+func TestRNSResolve(t *testing.T) {
+	rnsAddr := "marcelosdomain.rsk"
+	resolvedContent := "88ced8ba8e9396672840b47e332b33d6679d9962d80cf340d3cf615db23d4e07"
+
+	type test struct {
+		desc        string
+		ctx         context.Context
+		addr        string
+		content     string
+		expectedErr error
+	}
+
+	tests := []*test{
+		{
+			desc:        "valid RSK domain",
+			addr:        rnsAddr,
+			content:     resolvedContent,
+			expectedErr: nil,
+		},
+		{
+			desc:        "invalid RSK domain",
+			addr:        ".rsk",
+			content:     resolvedContent,
+			expectedErr: rns.ErrNoContent,
+		},
+	}
+
+	for _, x := range tests {
+		t.Run(x.desc, func(t *testing.T) {
+			api := NewAPI(nil, nil, nil, nil, nil)
+			res, err := api.Resolve(context.TODO(), x.addr)
+			if err == nil {
+				if x.expectedErr != nil {
+					t.Fatalf("expected error %q, got %q", x.expectedErr, res)
+				}
+				if x.content != res.Hex() {
+					t.Fatalf("expected result %q, got %q", x.content, res.Hex())
+				}
+			} else {
+				if x.expectedErr == nil {
+					t.Fatalf("expected no error, got %q", err)
+				}
+				if x.expectedErr.Error() != err.Error() {
+					t.Fatalf("expected error %q, got %q", x.expectedErr, err)
 				}
 			}
 		})
